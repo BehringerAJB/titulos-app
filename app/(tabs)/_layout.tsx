@@ -1,9 +1,5 @@
 /**
  * Layout de tabs — navegación principal de la app
- *
- * La barra de pestañas respeta el "safe area" inferior del dispositivo
- * (barra de navegación/gestos de Android, home indicator de iOS) para
- * que los botones de la app no se superpongan con los del sistema.
  */
 
 import { Tabs } from 'expo-router';
@@ -12,10 +8,12 @@ import { Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function TabLayout() {
+  // En Android, la barra de navegación del sistema (los 3 botones o la
+  // barra de gestos) puede ocupar el mismo espacio que la tab bar de la
+  // app. Usamos el inset inferior real del dispositivo para que la tab bar
+  // suba lo necesario y no se superponga ni quede tapada.
   const insets = useSafeAreaInsets();
-
-  // Espacio inferior real del dispositivo (nunca menor al padding original)
-  const bottomInset = Math.max(insets.bottom, Platform.OS === 'ios' ? 28 : 10);
+  const bottomInset = Platform.OS === 'android' ? insets.bottom : 0;
 
   return (
     <Tabs
@@ -26,8 +24,8 @@ export default function TabLayout() {
           backgroundColor: Colors.primary,
           borderTopColor: 'rgba(255,255,255,0.1)',
           borderTopWidth: 1,
-          height: 56 + bottomInset,
-          paddingBottom: bottomInset,
+          height: (Platform.OS === 'ios' ? 88 : 64) + bottomInset,
+          paddingBottom: (Platform.OS === 'ios' ? 28 : 10) + bottomInset,
           paddingTop: 8,
         },
         tabBarLabelStyle: {

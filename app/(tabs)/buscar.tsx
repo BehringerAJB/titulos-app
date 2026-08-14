@@ -16,6 +16,7 @@ import {
   ScrollView,
   TextInput,
   Switch,
+  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -23,22 +24,38 @@ import {
 import { useLocalSearchParams } from 'expo-router';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { useAuth } from '../../context/AuthContext';
-import { findByDNI, updateRow } from '../../services/sheets.service';
-import { showAlert } from '../../utils/cross-alert';
-import { logError, describeError } from '../../utils/logger';
+import { findByDNI, findByApellido, getAllRows, updateRow } from '../../services/sheets.service';
 import { Colors } from '../../constants/Colors';
 import { formatDate, parseDate } from '../../utils/date-formatter';
-import { pickDateWeb } from '../../utils/cross-date';
-import type { TituloRecord, SheetSearchResult } from '../../types';
+import type { TituloRecord, SheetSearchResult, SheetRowIndex } from '../../types';
+
+type SearchMode = 'dni' | 'apellido';
+type FiltroDashboard = 'retirados' | 'remitidos' | 'pendientes' | 'todos';
+type ListMatch = { rowIndex: SheetRowIndex; data: TituloRecord };
+
+const FILTRO_TITULOS: Record<FiltroDashboard, string> = {
+  retirados: 'Retirados',
+  remitidos: 'Remitidos a La Plata',
+  pendientes: 'Pendientes de Retiro',
+  todos: 'Todos los títulos',
+};
 
 export default function BuscarScreen() {
   const { authState } = useAuth();
-  const params = useLocalSearchParams<{ dni?: string }>();
+  const params = useLocalSearchParams<{ dni?: string; filtro?: FiltroDashboard }>();
+
+  // Solapa activa: buscar por DNI o por Apellido
+  const [searchMode, setSearchMode] = useState<SearchMode>('dni');
 
   // Estado de búsqueda
   const [searchDni, setSearchDni] = useState(params.dni || '');
+  const [searchApellido, setSearchApellido] = useState('');
   const [searching, setSearching] = useState(false);
   const [searchResult, setSearchResult] = useState<SheetSearchResult | null>(null);
+
+  // Resultados de búsqueda por Apellido, o del listado filtrado desde el Dashboard
+  const [listResults, setListResults] = useState<ListMatch[] | null>(null);
+  const [listTitle, setListTitle] = useState<string>('');
 
   // Estado de edición
   const [editMode, setEditMode] = useState(false);
@@ -61,47 +78,39 @@ export default function BuscarScreen() {
     'retiro' | 'envio' | 'devolucion' | null
   >(null);
 
-  /**
-   * Abre el selector de fecha: modal nativo en el teléfono,
-   * calendario nativo del navegador en web (el modal RN no existe ahí).
-   */
-  const openDatePicker = async (
-    which: 'retiro' | 'envio' | 'devolucion',
-    label: string,
-    current: Date | null,
-    setter: (d: Date) => void
-  ) => {
-    if (Platform.OS === 'web') {
-      const picked = await pickDateWeb(label, current);
-      if (picked) setter(picked);
-      return;
-    }
-    setShowPicker(which);
-  };
-
   // Si viene con DNI precargado (desde la pantalla de nuevo), buscar automáticamente
   useEffect(() => {
     if (params.dni) {
-      handleSearch();
+      setSearchMode('dni');
+      handleSearchDni();
     }
   }, [params.dni]);
 
-  // ─── Búsqueda ─────────────────────────────────────────────────────────────
+  // Si viene con un filtro precargado (desde los botones del Dashboard),
+  // mostrar directamente el listado correspondiente
+  useEffect(() => {
+    if (params.filtro) {
+      handleLoadFiltro(params.filtro);
+    }
+  }, [params.filtro]);
 
-  const handleSearch = async () => {
+  // ─── Búsqueda por DNI ─────────────────────────────────────────────────────
+
+  const handleSearchDni = async () => {
     const cleanDni = searchDni.replace(/\D/g, '');
     if (!cleanDni || cleanDni.length < 7) {
-      showAlert('DNI inválido', 'Ingresá un DNI de 7 u 8 dígitos.');
+      Alert.alert('DNI inválido', 'Ingresá un DNI de 7 u 8 dígitos.');
       return;
     }
 
     if (!authState.accessToken || !authState.spreadsheetId) {
-      showAlert('Error', 'Sesión expirada. Por favor reiniciá la app.');
+      Alert.alert('Error', 'Sesión expirada. Por favor reiniciá la app.');
       return;
     }
 
     setSearching(true);
     setSearchResult(null);
+    setListResults(null);
     setEditMode(false);
 
     try {
@@ -117,14 +126,103 @@ export default function BuscarScreen() {
         populateFields(result.data);
       }
     } catch (err) {
-      logError('buscar.findByDNI', describeError(err));
-      showAlert(
+      Alert.alert(
         'Error de búsqueda',
-        'No se pudo conectar con Google Sheets. Podés ver el detalle en "Ver registro" del Inicio.'
+        'No se pudo conectar con Google Sheets. Verificá tu conexión.'
       );
     } finally {
       setSearching(false);
     }
+  };
+
+  // ─── Búsqueda por Apellido ────────────────────────────────────────────────
+
+  const handleSearchApellido = async () => {
+    const query = searchApellido.trim();
+    if (query.length < 2) {
+      Alert.alert('Búsqueda muy corta', 'Ingresá al menos 2 letras del apellido.');
+      return;
+    }
+
+    if (!authState.accessToken || !authState.spreadsheetId) {
+      Alert.alert('Error', 'Sesión expirada. Por favor reiniciá la app.');
+      return;
+    }
+
+    setSearching(true);
+    setSearchResult(null);
+    setListResults(null);
+    setEditMode(false);
+
+    try {
+      const results = await findByApellido(
+        authState.accessToken,
+        authState.spreadsheetId,
+        query
+      );
+
+      if (results.length === 1) {
+        // Un solo resultado: lo mostramos directo, como si hubiera sido por DNI
+        setSearchResult({ found: true, rowIndex: results[0].rowIndex, data: results[0].data });
+        populateFields(results[0].data);
+      } else {
+        setListTitle(`Resultados para "${query}"`);
+        setListResults(results);
+        if (results.length === 0) {
+          setSearchResult({ found: false, rowIndex: null, data: null });
+        }
+      }
+    } catch (err) {
+      Alert.alert(
+        'Error de búsqueda',
+        'No se pudo conectar con Google Sheets. Verificá tu conexión.'
+      );
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  // ─── Listado filtrado (desde los botones del Dashboard) ──────────────────
+
+  const handleLoadFiltro = async (filtro: FiltroDashboard) => {
+    if (!authState.accessToken || !authState.spreadsheetId) {
+      Alert.alert('Error', 'Sesión expirada. Por favor reiniciá la app.');
+      return;
+    }
+
+    setSearching(true);
+    setSearchResult(null);
+    setListResults(null);
+    setEditMode(false);
+
+    try {
+      const rows = await getAllRows(authState.accessToken, authState.spreadsheetId);
+      const withIndex: ListMatch[] = rows.map((data, i) => ({ rowIndex: i + 2, data }));
+
+      const filtered = withIndex.filter(({ data }) => {
+        if (filtro === 'retirados') return data.retirado;
+        if (filtro === 'remitidos') return data.remitidoLaPlata;
+        if (filtro === 'pendientes') return !data.retirado;
+        return true; // 'todos'
+      });
+
+      setListTitle(FILTRO_TITULOS[filtro]);
+      setListResults(filtered);
+    } catch (err) {
+      Alert.alert(
+        'Error al cargar',
+        'No se pudo obtener el listado desde Google Sheets.'
+      );
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  /** Selecciona un registro de un listado (apellido o filtro) y lo abre en detalle */
+  const selectMatch = (match: ListMatch) => {
+    setSearchResult({ found: true, rowIndex: match.rowIndex, data: match.data });
+    populateFields(match.data);
+    setListResults(null);
   };
 
   /** Popula todos los campos de edición con los datos del registro */
@@ -149,21 +247,21 @@ export default function BuscarScreen() {
     if (!searchResult?.found || !searchResult.rowIndex || !searchResult.data) return;
 
     if (!authState.accessToken || !authState.spreadsheetId) {
-      showAlert('Error', 'Sesión expirada.');
+      Alert.alert('Error', 'Sesión expirada.');
       return;
     }
 
     // Validaciones condicionales
     if (retirado && !fechaRetiro) {
-      showAlert('Datos incompletos', 'Completá la Fecha de Retiro.');
+      Alert.alert('Datos incompletos', 'Completá la Fecha de Retiro.');
       return;
     }
     if (retirado && !quienRetiro.trim()) {
-      showAlert('Datos incompletos', 'Completá quién retiró el título.');
+      Alert.alert('Datos incompletos', 'Completá quién retiró el título.');
       return;
     }
     if (remitido && !fechaEnvio) {
-      showAlert('Datos incompletos', 'Completá la Fecha de Envío a La Plata.');
+      Alert.alert('Datos incompletos', 'Completá la Fecha de Envío a La Plata.');
       return;
     }
 
@@ -198,15 +296,14 @@ export default function BuscarScreen() {
       });
       setEditMode(false);
 
-      showAlert(
+      Alert.alert(
         '✅ Registro actualizado',
         'Los datos fueron guardados exitosamente en Google Sheets.'
       );
     } catch (err) {
-      logError('buscar.updateRow', describeError(err));
-      showAlert(
+      Alert.alert(
         'Error al actualizar',
-        'No se pudieron guardar los cambios. Podés ver el detalle en "Ver registro" del Inicio.'
+        'No se pudieron guardar los cambios. Intentá nuevamente.'
       );
     } finally {
       setSaving(false);
@@ -225,48 +322,129 @@ export default function BuscarScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Buscador */}
+        {/* Buscador con solapas DNI / Apellido */}
         <View style={styles.searchCard}>
-          <Text style={styles.searchTitle}>🔍 Buscar por DNI</Text>
-          <View style={styles.searchRow}>
-            <TextInput
-              style={styles.searchInput}
-              value={searchDni}
-              onChangeText={(t) => {
-                setSearchDni(t.replace(/\D/g, ''));
-                // Limpiar el resultado anterior apenas se tipea un DNI nuevo
-                setSearchResult(null);
-                setEditMode(false);
-              }}
-              placeholder="Número de documento..."
-              placeholderTextColor={Colors.textMuted}
-              keyboardType="numeric"
-              maxLength={8}
-              returnKeyType="search"
-              onSubmitEditing={handleSearch}
-            />
+          <View style={styles.tabRow}>
             <TouchableOpacity
-              style={styles.searchButton}
-              onPress={handleSearch}
-              disabled={searching}
+              style={[styles.tabButton, searchMode === 'dni' && styles.tabButtonActive]}
+              onPress={() => {
+                setSearchMode('dni');
+                setSearchResult(null);
+                setListResults(null);
+              }}
               activeOpacity={0.85}
             >
-              {searching ? (
-                <ActivityIndicator size="small" color={Colors.textLight} />
-              ) : (
-                <Text style={styles.searchButtonText}>Buscar</Text>
-              )}
+              <Text style={[styles.tabButtonText, searchMode === 'dni' && styles.tabButtonTextActive]}>
+                DNI
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tabButton, searchMode === 'apellido' && styles.tabButtonActive]}
+              onPress={() => {
+                setSearchMode('apellido');
+                setSearchResult(null);
+                setListResults(null);
+              }}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[styles.tabButtonText, searchMode === 'apellido' && styles.tabButtonTextActive]}
+              >
+                Apellido
+              </Text>
             </TouchableOpacity>
           </View>
+
+          {searchMode === 'dni' ? (
+            <View style={styles.searchRow}>
+              <TextInput
+                style={styles.searchInput}
+                value={searchDni}
+                onChangeText={(t) => setSearchDni(t.replace(/\D/g, ''))}
+                placeholder="Número de documento..."
+                placeholderTextColor={Colors.textMuted}
+                keyboardType="numeric"
+                maxLength={8}
+                returnKeyType="search"
+                onSubmitEditing={handleSearchDni}
+              />
+              <TouchableOpacity
+                style={styles.searchButton}
+                onPress={handleSearchDni}
+                disabled={searching}
+                activeOpacity={0.85}
+              >
+                {searching ? (
+                  <ActivityIndicator size="small" color={Colors.textLight} />
+                ) : (
+                  <Text style={styles.searchButtonText}>Buscar</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.searchRow}>
+              <TextInput
+                style={styles.searchInput}
+                value={searchApellido}
+                onChangeText={setSearchApellido}
+                placeholder="Apellido y/o nombre..."
+                placeholderTextColor={Colors.textMuted}
+                autoCapitalize="characters"
+                returnKeyType="search"
+                onSubmitEditing={handleSearchApellido}
+              />
+              <TouchableOpacity
+                style={styles.searchButton}
+                onPress={handleSearchApellido}
+                disabled={searching}
+                activeOpacity={0.85}
+              >
+                {searching ? (
+                  <ActivityIndicator size="small" color={Colors.textLight} />
+                ) : (
+                  <Text style={styles.searchButtonText}>Buscar</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
+        {/* Listado (búsqueda por apellido con varias coincidencias, o filtro del Dashboard) */}
+        {listResults !== null && (
+          <View style={styles.listCard}>
+            <Text style={styles.listTitle}>
+              {listTitle} ({listResults.length})
+            </Text>
+            {listResults.length === 0 ? (
+              <Text style={styles.notFoundText}>No hay títulos que coincidan.</Text>
+            ) : (
+              listResults.map((match) => (
+                <TouchableOpacity
+                  key={match.data.dni}
+                  style={styles.listItem}
+                  onPress={() => selectMatch(match)}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.listItemNombre}>{match.data.apellidoNombre}</Text>
+                    <Text style={styles.listItemDni}>DNI {match.data.dni}</Text>
+                  </View>
+                  <StatusBadge record={match.data} compact />
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        )}
+
         {/* Resultado: no encontrado */}
-        {searchResult !== null && !searchResult.found && (
+        {listResults === null && searchResult !== null && !searchResult.found && (
           <View style={styles.notFoundCard}>
             <Text style={styles.notFoundIcon}>🔎</Text>
             <Text style={styles.notFoundTitle}>No encontrado</Text>
             <Text style={styles.notFoundText}>
-              No existe un título registrado para el DNI {searchDni}.
+              {searchMode === 'dni'
+                ? `No existe un título registrado para el DNI ${searchDni}.`
+                : `No se encontraron títulos para "${searchApellido}".`}
             </Text>
           </View>
         )}
@@ -346,7 +524,7 @@ export default function BuscarScreen() {
                   <>
                     <TouchableOpacity
                       style={styles.datePickerButton}
-                      onPress={() => openDatePicker('retiro', 'Fecha de Retiro', fechaRetiro, setFechaRetiro)}
+                      onPress={() => setShowPicker('retiro')}
                     >
                       <Text style={styles.datePickerLabel}>Fecha de Retiro</Text>
                       <Text style={styles.datePickerValue}>
@@ -373,7 +551,7 @@ export default function BuscarScreen() {
                 {remitido && (
                   <TouchableOpacity
                     style={styles.datePickerButton}
-                    onPress={() => openDatePicker('envio', 'Fecha de Envío a La Plata', fechaEnvio, setFechaEnvio)}
+                    onPress={() => setShowPicker('envio')}
                   >
                     <Text style={styles.datePickerLabel}>Fecha de Envío a La Plata</Text>
                     <Text style={styles.datePickerValue}>
@@ -385,7 +563,7 @@ export default function BuscarScreen() {
                 {/* Fecha devolución */}
                 <TouchableOpacity
                   style={[styles.datePickerButton, { borderStyle: 'dashed' }]}
-                  onPress={() => openDatePicker('devolucion', 'Fecha de Devolución de La Plata', fechaDevolucion, setFechaDevolucion)}
+                  onPress={() => setShowPicker('devolucion')}
                 >
                   <Text style={styles.datePickerLabel}>Fecha de Devolución de La Plata (opcional)</Text>
                   <Text style={styles.datePickerValue}>
@@ -448,7 +626,7 @@ export default function BuscarScreen() {
 
 // ─── Componentes auxiliares ───────────────────────────────────────────────────
 
-function StatusBadge({ record }: { record: TituloRecord }) {
+function StatusBadge({ record, compact }: { record: TituloRecord; compact?: boolean }) {
   let label = 'Pendiente';
   let bg = Colors.warningLight;
   let color = Colors.warning;
@@ -467,7 +645,7 @@ function StatusBadge({ record }: { record: TituloRecord }) {
   }
 
   return (
-    <View style={[styles.badge, { backgroundColor: bg }]}>
+    <View style={[styles.badge, compact && styles.badgeCompact, { backgroundColor: bg }]}>
       <Text style={styles.badgeIcon}>{icon}</Text>
       <Text style={[styles.badgeText, { color }]}>{label}</Text>
     </View>
@@ -525,6 +703,32 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   searchTitle: { color: Colors.textPrimary, fontSize: 16, fontWeight: '700' },
+
+  tabRow: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 12,
+    padding: 4,
+    gap: 4,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 9,
+    alignItems: 'center',
+  },
+  tabButtonActive: {
+    backgroundColor: Colors.primary,
+  },
+  tabButtonText: {
+    color: Colors.textSecondary,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  tabButtonTextActive: {
+    color: Colors.textLight,
+  },
+
   searchRow: { flexDirection: 'row', gap: 10 },
   searchInput: {
     flex: 1,
@@ -595,6 +799,44 @@ const styles = StyleSheet.create({
   },
   badgeIcon: { fontSize: 13 },
   badgeText: { fontSize: 12, fontWeight: '700' },
+  badgeCompact: { paddingHorizontal: 8, paddingVertical: 4 },
+
+  listCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 16,
+    gap: 10,
+    shadowColor: Colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  listTitle: {
+    color: Colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  listItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  listItemNombre: {
+    color: Colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  listItemDni: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
 
   resultDetails: { padding: 16, gap: 8 },
   detailItem: {

@@ -12,13 +12,12 @@ import {
   StyleSheet,
   ScrollView,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { getAllRows } from '../../services/sheets.service';
 import { logout as apiLogout } from '../../services/auth.service';
-import { showAlert } from '../../utils/cross-alert';
-import { logError, describeError } from '../../utils/logger';
 import { Colors } from '../../constants/Colors';
 import type { DashboardStats } from '../../types';
 
@@ -34,7 +33,7 @@ export default function DashboardScreen() {
   const [lastSync, setLastSync] = useState<string | null>(null);
 
   const handleLogout = async () => {
-    showAlert(
+    Alert.alert(
       'Cerrar sesión',
       '¿Estás seguro de que querés cerrar la sesión?',
       [
@@ -52,7 +51,7 @@ export default function DashboardScreen() {
                 spreadsheetId: null,
               });
             } catch (err) {
-              showAlert('Error', 'No se pudo cerrar la sesión.');
+              Alert.alert('Error', 'No se pudo cerrar la sesión.');
             }
           },
         },
@@ -73,10 +72,10 @@ export default function DashboardScreen() {
       setStats({ total, retirados, remitidos, pendientes });
       setLastSync(new Date().toLocaleTimeString('es-AR'));
     } catch (err) {
-      logError('dashboard.loadStats', describeError(err));
-      showAlert(
-        'No se pudieron cargar los datos',
-        'Hubo un problema al conectar con Google Sheets. Podés ver el detalle en "📝 Ver registro", abajo.'
+      console.error('[Dashboard] Error al cargar estadísticas:', err);
+      Alert.alert(
+        'Sin conexión',
+        'No se pudieron cargar las estadísticas. Verificá tu conexión a internet.'
       );
     }
   }, [authState]);
@@ -132,6 +131,7 @@ export default function DashboardScreen() {
           label="Total de Títulos"
           color={Colors.primary}
           bgColor={Colors.surfaceAlt}
+          onPress={() => router.push({ pathname: '/(tabs)/buscar', params: { filtro: 'todos' } })}
         />
         <StatCard
           icon="⏳"
@@ -139,6 +139,7 @@ export default function DashboardScreen() {
           label="Pendientes de Retiro"
           color={Colors.warning}
           bgColor={Colors.warningLight}
+          onPress={() => router.push({ pathname: '/(tabs)/buscar', params: { filtro: 'pendientes' } })}
         />
         <StatCard
           icon="✅"
@@ -146,6 +147,7 @@ export default function DashboardScreen() {
           label="Retirados"
           color={Colors.success}
           bgColor={Colors.successLight}
+          onPress={() => router.push({ pathname: '/(tabs)/buscar', params: { filtro: 'retirados' } })}
         />
         <StatCard
           icon="📨"
@@ -153,6 +155,7 @@ export default function DashboardScreen() {
           label="Remitidos a La Plata"
           color={Colors.info}
           bgColor={Colors.infoLight}
+          onPress={() => router.push({ pathname: '/(tabs)/buscar', params: { filtro: 'remitidos' } })}
         />
       </View>
 
@@ -198,15 +201,6 @@ export default function DashboardScreen() {
           Archivo: "Títulos Secundario" en tu Drive
         </Text>
       </View>
-
-      {/* Acceso al registro de eventos/errores */}
-      <TouchableOpacity
-        style={styles.logViewerButton}
-        onPress={() => router.push('/log-viewer')}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.logViewerText}>📝 Ver registro de eventos</Text>
-      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -217,19 +211,27 @@ function StatCard({
   label,
   color,
   bgColor,
+  onPress,
 }: {
   icon: string;
   value: number;
   label: string;
   color: string;
   bgColor: string;
+  onPress?: () => void;
 }) {
   return (
-    <View style={[styles.statCard, { backgroundColor: bgColor }]}>
+    <TouchableOpacity
+      style={[styles.statCard, { backgroundColor: bgColor }]}
+      onPress={onPress}
+      activeOpacity={0.8}
+      disabled={!onPress}
+    >
       <Text style={styles.statIcon}>{icon}</Text>
       <Text style={[styles.statValue, { color }]}>{value}</Text>
       <Text style={[styles.statLabel, { color: Colors.textSecondary }]}>{label}</Text>
-    </View>
+      {onPress && <Text style={[styles.statChevron, { color }]}>Ver listado ›</Text>}
+    </TouchableOpacity>
   );
 }
 
@@ -326,6 +328,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
   },
+  statChevron: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 6,
+    opacity: 0.85,
+  },
   actionButtonPrimary: {
     backgroundColor: Colors.primary,
     borderRadius: 16,
@@ -391,15 +399,5 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: 12,
     marginTop: 2,
-  },
-  logViewerButton: {
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  logViewerText: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-    textDecorationLine: 'underline',
   },
 });

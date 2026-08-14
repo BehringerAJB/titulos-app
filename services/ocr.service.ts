@@ -11,25 +11,41 @@
 
 import { extractDNIFromText, cleanDNI } from '../utils/dni-cleaner';
 import { extractDateFromText } from '../utils/date-formatter';
-import { detectSeries } from '../utils/series-detector';
+import { detectSeries, extractSerieFolio } from '../utils/series-detector';
 import type { OCRData } from '../types';
 
 /**
  * Extrae el nombre/apellido del texto OCR.
- * Estrategia: busca línea precedida por "APELLIDO" o "NOMBRE" o similar.
- * Si no encuentra, retorna la segunda o tercera línea de texto más larga.
+ *
+ * Estrategia principal (títulos de secundario de adultos): el apellido y
+ * nombre aparece justo después de la frase "certifica que" y antes de
+ * "nacido/a en" — ej: "...certifica que VARGAS BRAIAN nacido/a en AVELLANEDA...".
+ * Si no se encuentra ese patrón, se usan las estrategias anteriores como
+ * respaldo.
  */
-function extractNombreFromText(text: string): string {
+export function extractNombreFromText(text: string): string {
+  // Texto "aplanado" para poder matchear la frase aunque el OCR la haya
+  // partido en varias líneas.
+  const flat = text.replace(/\s+/g, ' ');
+
+  // Estrategia 1 (más confiable): entre "certifica que" y "nacido/a"
+  const certificaMatch = flat.match(
+    /certifica\s+que\s+([A-ZÁÉÍÓÚÑa-záéíóúñ][A-ZÁÉÍÓÚÑa-záéíóúñ\s,.]{2,60}?)\s+naci(?:d[oa]|[oó])/i
+  );
+  if (certificaMatch) {
+    return certificaMatch[1].trim().toUpperCase();
+  }
+
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-  // Estrategia 1: buscar línea siguiente a "APELLIDO Y NOMBRE" o "APELLIDO/NOMBRE"
+  // Estrategia 2: buscar línea siguiente a "APELLIDO Y NOMBRE" o "APELLIDO/NOMBRE"
   for (let i = 0; i < lines.length - 1; i++) {
     if (/apellido\s*(y\s*)?nombre/i.test(lines[i])) {
       return lines[i + 1];
     }
   }
 
-  // Estrategia 2: buscar líneas en MAYÚSCULAS de más de 5 chars (nombres suelen estar en mayúscula)
+  // Estrategia 3: buscar líneas en MAYÚSCULAS de más de 5 chars (nombres suelen estar en mayúscula)
   const upperLines = lines.filter(
     (l) => l === l.toUpperCase() && l.length > 5 && /^[A-ZÁÉÍÓÚÑ\s,]+$/.test(l)
   );
@@ -42,29 +58,44 @@ function extractNombreFromText(text: string): string {
 
 /**
  * Extrae la calificación final del texto OCR.
- * Busca números decimales o palabras clave de calificación.
+ *
+ * Estrategia principal: el promedio suele venir en el mismo renglón que la
+ * etiqueta, ej: "PROMEDIO GENERAL: 8,19(ocho con 19/100)". Si no está en el
+ * mismo renglón, se prueba en la línea siguiente, y por último se buscan
+ * números o palabras de calificación sueltos en todo el texto.
  */
-function extractCalificacionFromText(text: string): string {
+export function extractCalificacionFromText(text: string): string {
+  const flat = text.replace(/\s+/g, ' ');
+
+  // Estrategia 1: etiqueta y número en el mismo renglón
+  // (ej: "PROMEDIO GENERAL: 8,19", "CALIFICACIÓN FINAL: 8.50")
+  const sameLineMatch = flat.match(
+    /(?:promedio\s*general|promedio|calificaci[oó]n(?:\s*final)?|nota\s*final)\s*[:\s]*(\d{1,2}[.,]\d{1,2})/i
+  );
+  if (sameLineMatch) return sameLineMatch[1].replace(',', '.');
+
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-  // Estrategia 1: línea siguiente a "CALIFICACIÓN", "NOTA", "PROMEDIO"
+  // Estrategia 2: línea siguiente a "CALIFICACIÓN", "NOTA", "PROMEDIO"
   for (let i = 0; i < lines.length - 1; i++) {
     if (/calificaci[oó]n|nota\s*final|promedio/i.test(lines[i])) {
+      const numInNextLine = lines[i + 1].match(/\d{1,2}[.,]\d{1,2}/);
+      if (numInNextLine) return numInNextLine[0].replace(',', '.');
       return lines[i + 1];
     }
   }
 
-  // Estrategia 2: palabras de calificación textual
+  // Estrategia 3: palabras de calificación textual
   const textualMatch = text.match(
     /\b(sobresaliente|distinguido|bueno|aprobado|insuficiente)\b/i
   );
   if (textualMatch) return textualMatch[1];
 
-  // Estrategia 3: número decimal (ej: "8.50", "9,25")
+  // Estrategia 4: número decimal suelto (ej: "8.50", "9,25")
   const numMatch = text.match(/\b(\d{1,2}[.,]\d{1,2})\b/);
   if (numMatch) return numMatch[1].replace(',', '.');
 
-  // Estrategia 4: número entero solo (ej: "8", "10")
+  // Estrategia 5: número entero solo (ej: "8", "10")
   const intMatch = text.match(/\b([1-9]|10)\b/);
   if (intMatch) return intMatch[1];
 
@@ -104,7 +135,13 @@ export async function processImage(imageUri: string): Promise<OCRData> {
   const apellidoNombre = extractNombreFromText(rawText);
   const fechaEmision = extractDateFromText(rawText);
   const calificacionFinal = extractCalificacionFromText(rawText);
-  const serieModelo = detectSeries(rawText);
+
+  // Serie/Modelo: primero intentamos unir el año de "Serie" (izquierda) con
+  // el número de folio (derecha) — ej: "2014-00901206". Si no se puede
+  // armar ese identificador, caemos a la detección por patrones conocidos
+  // (MODELO 2020, SERIE 2014, etc.) configurados en series-patterns.json.
+  const serieFolio = extractSerieFolio(rawText, dni);
+  const serieModelo = serieFolio || detectSeries(rawText);
 
   return {
     dni,

@@ -22,9 +22,7 @@
 
 import axios from 'axios';
 import { formatDateTime } from '../utils/date-formatter';
-import { refreshAccessToken } from './auth.service';
-import { logInfo, logWarn, logError, describeError } from '../utils/logger';
-import type { TituloRecord, SheetSearchResult } from '../types';
+import type { TituloRecord, SheetSearchResult, SheetRowIndex } from '../types';
 
 // Nombre del archivo de Google Sheets que se creará/buscará
 const SPREADSHEET_NAME = 'Títulos Secundario';
@@ -148,43 +146,6 @@ function sheetsHeaders(accessToken: string) {
 }
 
 /**
- * Ejecuta una operación contra la API de Sheets/Drive. Si falla porque
- * el access token venció (HTTP 401), pide uno nuevo automáticamente y
- * reintenta una sola vez con el token fresco — así el usuario no ve más
- * "Sin conexión" solo porque pasó una hora desde el login. Cualquier
- * error (o el reintento fallido) queda registrado en el log local con
- * el detalle real, en vez de perderse en un mensaje genérico.
- */
-async function withAuthRetry<T>(
-  tag: string,
-  accessToken: string,
-  fn: (token: string) => Promise<T>
-): Promise<T> {
-  try {
-    const result = await fn(accessToken);
-    return result;
-  } catch (err: any) {
-    const status = err?.response?.status;
-    if (status === 401) {
-      logWarn(tag, 'Token vencido (401), pidiendo uno nuevo...');
-      const newToken = await refreshAccessToken();
-      if (newToken) {
-        try {
-          const result = await fn(newToken);
-          logInfo(tag, 'OK tras renovar el token');
-          return result;
-        } catch (retryErr: any) {
-          logError(tag, describeError(retryErr));
-          throw retryErr;
-        }
-      }
-    }
-    logError(tag, describeError(err));
-    throw err;
-  }
-}
-
-/**
  * Busca en Google Drive un spreadsheet con el nombre SPREADSHEET_NAME.
  * Si no existe, lo crea con encabezados.
  * 
@@ -269,37 +230,85 @@ export async function findByDNI(
     }
     return { found: false, rowIndex: null, data: null };
   }
-  return withAuthRetry('sheets.findByDNI', accessToken, async (token) => {
-    const headers = sheetsHeaders(token);
+  const headers = sheetsHeaders(accessToken);
 
-    // Obtener toda la columna A (DNIs) para buscar
-    const range = encodeURIComponent(`${SHEET_NAME}!A:A`);
-    const res = await axios.get(`${SHEETS_BASE}/${spreadsheetId}/values/${range}`, {
-      headers,
-    });
-
-    const rows: string[][] = res.data.values || [];
-
-    // rows[0] es el encabezado, empezamos en rows[1]
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] === dni) {
-        // Fila encontrada — obtener todos los datos de esa fila
-        const rowRange = encodeURIComponent(`${SHEET_NAME}!A${i + 1}:M${i + 1}`);
-        const rowRes = await axios.get(
-          `${SHEETS_BASE}/${spreadsheetId}/values/${rowRange}`,
-          { headers }
-        );
-        const rowValues: string[] = (rowRes.data.values || [[]])[0] || [];
-        return {
-          found: true,
-          rowIndex: i + 1, // 1-based, incluyendo encabezado
-          data: rowToRecord(rowValues),
-        };
-      }
-    }
-
-    return { found: false, rowIndex: null, data: null };
+  // Obtener toda la columna A (DNIs) para buscar
+  const range = `${SHEET_NAME}!A:A`;
+  const res = await axios.get(`${SHEETS_BASE}/${spreadsheetId}/values/${range}`, {
+    headers,
   });
+
+  const rows: string[][] = res.data.values || [];
+
+  // rows[0] es el encabezado, empezamos en rows[1]
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === dni) {
+      // Fila encontrada — obtener todos los datos de esa fila
+      const rowRange = `${SHEET_NAME}!A${i + 1}:M${i + 1}`;
+      const rowRes = await axios.get(
+        `${SHEETS_BASE}/${spreadsheetId}/values/${rowRange}`,
+        { headers }
+      );
+      const rowValues: string[] = (rowRes.data.values || [[]])[0] || [];
+      return {
+        found: true,
+        rowIndex: i + 1, // 1-based, incluyendo encabezado
+        data: rowToRecord(rowValues),
+      };
+    }
+  }
+
+  return { found: false, rowIndex: null, data: null };
+}
+
+/**
+ * Busca títulos por Apellido y Nombre (coincidencia parcial, sin distinguir
+ * mayúsculas/minúsculas ni acentos). Puede devolver varios resultados si
+ * hay más de una persona que coincide con el texto buscado.
+ *
+ * @param accessToken - Token de acceso OAuth
+ * @param spreadsheetId - ID del spreadsheet
+ * @param query - Texto a buscar dentro de "Apellido y Nombre"
+ * @returns Lista de coincidencias con su fila y datos
+ */
+export async function findByApellido(
+  accessToken: string,
+  spreadsheetId: string,
+  query: string
+): Promise<{ rowIndex: SheetRowIndex; data: TituloRecord }[]> {
+  const normalize = (s: string) =>
+    s
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // quita acentos
+      .toLowerCase()
+      .trim();
+
+  const needle = normalize(query);
+  if (!needle) return [];
+
+  if (accessToken === 'demo' || spreadsheetId === 'demo-spreadsheet-id') {
+    return localMockDatabase
+      .map((record, index) => ({ rowIndex: index + 2, data: { ...record } }))
+      .filter((r) => normalize(r.data.apellidoNombre).includes(needle));
+  }
+
+  const headers = sheetsHeaders(accessToken);
+  const range = `${SHEET_NAME}!A2:M`;
+  const res = await axios.get(`${SHEETS_BASE}/${spreadsheetId}/values/${range}`, {
+    headers,
+  });
+
+  const rows: string[][] = res.data.values || [];
+  const results: { rowIndex: SheetRowIndex; data: TituloRecord }[] = [];
+
+  rows.forEach((row, i) => {
+    const record = rowToRecord(row);
+    if (normalize(record.apellidoNombre).includes(needle)) {
+      results.push({ rowIndex: i + 2, data: record }); // +2: fila 1 es encabezado, i es 0-based
+    }
+  });
+
+  return results;
 }
 
 /**
@@ -324,31 +333,28 @@ export async function addRow(
     });
     return;
   }
-  await withAuthRetry('sheets.addRow', accessToken, async (token) => {
-    const headers = sheetsHeaders(token);
-    const now = formatDateTime();
+  const headers = sheetsHeaders(accessToken);
+  const now = formatDateTime();
 
-    const fullRecord: TituloRecord = {
-      ...record,
-      fechaCaptura: now,
-      ultimaModificacion: now,
-    };
+  const fullRecord: TituloRecord = {
+    ...record,
+    fechaCaptura: now,
+    ultimaModificacion: now,
+  };
 
-    const values = [recordToRow(fullRecord)];
+  const values = [recordToRow(fullRecord)];
 
-    const appendRange = encodeURIComponent(`${SHEET_NAME}!A:M`);
-    await axios.post(
-      `${SHEETS_BASE}/${spreadsheetId}/values/${appendRange}:append`,
-      { values },
-      {
-        headers,
-        params: {
-          valueInputOption: 'USER_ENTERED',
-          insertDataOption: 'INSERT_ROWS',
-        },
-      }
-    );
-  });
+  await axios.post(
+    `${SHEETS_BASE}/${spreadsheetId}/values/${SHEET_NAME}!A:M:append`,
+    { values },
+    {
+      headers,
+      params: {
+        valueInputOption: 'USER_ENTERED',
+        insertDataOption: 'INSERT_ROWS',
+      },
+    }
+  );
 }
 
 /**
@@ -376,28 +382,26 @@ export async function updateRow(
     }
     return;
   }
-  await withAuthRetry('sheets.updateRow', accessToken, async (token) => {
-    const headers = sheetsHeaders(token);
+  const headers = sheetsHeaders(accessToken);
 
-    const updatedRecord: TituloRecord = {
-      ...record,
-      ultimaModificacion: formatDateTime(),
-      // Preservar fechaCaptura original
-      fechaCaptura: record.fechaCaptura,
-    };
+  const updatedRecord: TituloRecord = {
+    ...record,
+    ultimaModificacion: formatDateTime(),
+    // Preservar fechaCaptura original
+    fechaCaptura: record.fechaCaptura,
+  };
 
-    const values = [recordToRow(updatedRecord)];
-    const range = encodeURIComponent(`${SHEET_NAME}!A${rowIndex}:M${rowIndex}`);
+  const values = [recordToRow(updatedRecord)];
+  const range = `${SHEET_NAME}!A${rowIndex}:M${rowIndex}`;
 
-    await axios.put(
-      `${SHEETS_BASE}/${spreadsheetId}/values/${range}`,
-      { values },
-      {
-        headers,
-        params: { valueInputOption: 'USER_ENTERED' },
-      }
-    );
-  });
+  await axios.put(
+    `${SHEETS_BASE}/${spreadsheetId}/values/${range}`,
+    { values },
+    {
+      headers,
+      params: { valueInputOption: 'USER_ENTERED' },
+    }
+  );
 }
 
 /**
@@ -415,16 +419,14 @@ export async function getAllRows(
   if (accessToken === 'demo' || spreadsheetId === 'demo-spreadsheet-id') {
     return [...localMockDatabase];
   }
-  return withAuthRetry('sheets.getAllRows', accessToken, async (token) => {
-    const headers = sheetsHeaders(token);
-    const range = encodeURIComponent(`${SHEET_NAME}!A2:M`);
+  const headers = sheetsHeaders(accessToken);
+  const range = `${SHEET_NAME}!A2:M`;
 
-    const res = await axios.get(
-      `${SHEETS_BASE}/${spreadsheetId}/values/${range}`,
-      { headers }
-    );
+  const res = await axios.get(
+    `${SHEETS_BASE}/${spreadsheetId}/values/${range}`,
+    { headers }
+  );
 
-    const rows: string[][] = res.data.values || [];
-    return rows.map((row) => rowToRecord(row));
-  });
+  const rows: string[][] = res.data.values || [];
+  return rows.map((row) => rowToRecord(row));
 }

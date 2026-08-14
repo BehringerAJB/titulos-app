@@ -72,4 +72,23 @@ describe('extractDNIFromText', () => {
     const text = 'Sin datos relevantes aquí';
     expect(extractDNIFromText(text)).toBe('');
   });
+
+  test('no confunde el DNI con el número de serie/folio del título', () => {
+    // "00901206" es el folio (arriba a la derecha) y "38481915" el DNI real,
+    // que viene etiquetado como "documento nacional de identidad".
+    const text = [
+      '00901206',
+      'Serie',
+      '2014',
+      'REPÚBLICA ARGENTINA',
+      'la autoridad certifica que VARGAS BRAIAN Tipo de documento',
+      'DOCUMENTO NACIONAL DE IDENTIDAD N° 38481915 obtuvo el título',
+    ].join('\n');
+    expect(extractDNIFromText(text)).toBe('38481915');
+  });
+
+  test('detecta el DNI aunque la etiqueta esté partida en dos líneas por el OCR', () => {
+    const text = 'Tipo de documento DOCUMENTO\nNACIONAL DE IDENTIDAD N° 38481915';
+    expect(extractDNIFromText(text)).toBe('38481915');
+  });
 });
