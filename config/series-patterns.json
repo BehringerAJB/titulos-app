@@ -1,0 +1,29 @@
+{
+  "patterns": [
+    {
+      "label": "MODELO 2020",
+      "regex": "modelo\\s*2020",
+      "flags": "i"
+    },
+    {
+      "label": "SERIE 2014",
+      "regex": "serie\\s*2014",
+      "flags": "i"
+    },
+    {
+      "label": "MODELO 2019",
+      "regex": "modelo\\s*2019",
+      "flags": "i"
+    },
+    {
+      "label": "MODELO 2018",
+      "regex": "modelo\\s*2018",
+      "flags": "i"
+    },
+    {
+      "label": "SERIE 2010",
+      "regex": "serie\\s*2010",
+      "flags": "i"
+    }
+  ]
+}

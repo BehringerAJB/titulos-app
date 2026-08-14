@@ -1,0 +1,53 @@
+/**
+ * Contexto Global de Autenticación
+ * 
+ * Provee el estado de auth a toda la app.
+ * Se inicializa leyendo los tokens guardados en SecureStore.
+ */
+
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { getAuthState } from '../services/auth.service';
+import type { AuthState } from '../types';
+
+interface AuthContextType {
+  authState: AuthState;
+  setAuthState: (state: AuthState) => void;
+  loading: boolean;
+}
+
+const defaultAuthState: AuthState = {
+  isAuthenticated: false,
+  accessToken: null,
+  userEmail: null,
+  spreadsheetId: null,
+};
+
+const AuthContext = createContext<AuthContextType>({
+  authState: defaultAuthState,
+  setAuthState: () => {},
+  loading: true,
+});
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [authState, setAuthState] = useState<AuthState>(defaultAuthState);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Al iniciar la app, recuperar estado de autenticación guardado
+    getAuthState().then((state) => {
+      setAuthState(state);
+      setLoading(false);
+    });
+  }, []);
+
+  return (
+    <AuthContext.Provider value={{ authState, setAuthState, loading }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+/** Hook para acceder al contexto de autenticación */
+export function useAuth() {
+  return useContext(AuthContext);
+}
