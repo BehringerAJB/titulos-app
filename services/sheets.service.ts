@@ -25,7 +25,8 @@ import { formatDateTime } from '../utils/date-formatter';
 import type { TituloRecord, SheetSearchResult, SheetRowIndex } from '../types';
 
 // Nombre del archivo de Google Sheets que se creará/buscará
-const SPREADSHEET_NAME = 'Títulos Secundario';
+// (sin tilde a propósito: coincide con el nombre del archivo ya renombrado en Drive)
+const SPREADSHEET_NAME = 'Titulos Secundario';
 
 // Nombre de la hoja dentro del archivo
 const SHEET_NAME = 'Títulos';
@@ -233,8 +234,10 @@ export async function findByDNI(
   const headers = sheetsHeaders(accessToken);
 
   // Obtener toda la columna A (DNIs) para buscar
+  // OJO: el nombre de la hoja ("Títulos", con tilde) va dentro de la URL —
+  // hay que codificarlo con encodeURIComponent o Google rechaza el pedido.
   const range = `${SHEET_NAME}!A:A`;
-  const res = await axios.get(`${SHEETS_BASE}/${spreadsheetId}/values/${range}`, {
+  const res = await axios.get(`${SHEETS_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`, {
     headers,
   });
 
@@ -246,7 +249,7 @@ export async function findByDNI(
       // Fila encontrada — obtener todos los datos de esa fila
       const rowRange = `${SHEET_NAME}!A${i + 1}:M${i + 1}`;
       const rowRes = await axios.get(
-        `${SHEETS_BASE}/${spreadsheetId}/values/${rowRange}`,
+        `${SHEETS_BASE}/${spreadsheetId}/values/${encodeURIComponent(rowRange)}`,
         { headers }
       );
       const rowValues: string[] = (rowRes.data.values || [[]])[0] || [];
@@ -294,7 +297,7 @@ export async function findByApellido(
 
   const headers = sheetsHeaders(accessToken);
   const range = `${SHEET_NAME}!A2:M`;
-  const res = await axios.get(`${SHEETS_BASE}/${spreadsheetId}/values/${range}`, {
+  const res = await axios.get(`${SHEETS_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`, {
     headers,
   });
 
@@ -345,7 +348,7 @@ export async function addRow(
   const values = [recordToRow(fullRecord)];
 
   await axios.post(
-    `${SHEETS_BASE}/${spreadsheetId}/values/${SHEET_NAME}!A:M:append`,
+    `${SHEETS_BASE}/${spreadsheetId}/values/${encodeURIComponent(`${SHEET_NAME}!A:M`)}:append`,
     { values },
     {
       headers,
@@ -395,7 +398,7 @@ export async function updateRow(
   const range = `${SHEET_NAME}!A${rowIndex}:M${rowIndex}`;
 
   await axios.put(
-    `${SHEETS_BASE}/${spreadsheetId}/values/${range}`,
+    `${SHEETS_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`,
     { values },
     {
       headers,
@@ -423,7 +426,7 @@ export async function getAllRows(
   const range = `${SHEET_NAME}!A2:M`;
 
   const res = await axios.get(
-    `${SHEETS_BASE}/${spreadsheetId}/values/${range}`,
+    `${SHEETS_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`,
     { headers }
   );
 
