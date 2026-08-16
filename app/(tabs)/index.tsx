@@ -18,6 +18,7 @@ import { router } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { getAllRows } from '../../services/sheets.service';
 import { logout as apiLogout } from '../../services/auth.service';
+import { withTokenRefresh, SessionExpiredError } from '../../utils/with-token-refresh';
 import { Colors } from '../../constants/Colors';
 import type { DashboardStats } from '../../types';
 
@@ -63,7 +64,11 @@ export default function DashboardScreen() {
     if (!authState.accessToken || !authState.spreadsheetId) return;
 
     try {
-      const rows = await getAllRows(authState.accessToken, authState.spreadsheetId);
+      // withTokenRefresh: si el token de Google venció (pasó más de 1 hora
+      // desde el login), lo renueva solo en segundo plano y reintenta.
+      const rows = await withTokenRefresh(authState, setAuthState, (token) =>
+        getAllRows(token, authState.spreadsheetId as string)
+      );
       const total = rows.length;
       const retirados = rows.filter((r) => r.retirado).length;
       const remitidos = rows.filter((r) => r.remitidoLaPlata).length;
@@ -73,10 +78,17 @@ export default function DashboardScreen() {
       setLastSync(new Date().toLocaleTimeString('es-AR'));
     } catch (err) {
       console.error('[Dashboard] Error al cargar estadísticas:', err);
-      Alert.alert(
-        'Sin conexión',
-        'No se pudieron cargar las estadísticas. Verificá tu conexión a internet.'
-      );
+      if (err instanceof SessionExpiredError) {
+        Alert.alert(
+          'Sesión vencida',
+          'Tu sesión de Google venció y no se pudo renovar sola. Cerrá sesión y volvé a entrar.'
+        );
+      } else {
+        Alert.alert(
+          'Sin conexión',
+          'No se pudieron cargar las estadísticas. Verificá tu conexión a internet.'
+        );
+      }
     }
   }, [authState]);
 

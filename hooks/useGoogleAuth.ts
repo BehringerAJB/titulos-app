@@ -13,6 +13,11 @@
  * IMPORTANTE: login() devuelve el nuevo AuthState (o null si falló/canceló).
  * Quien lo llama debe empujar ese estado al contexto global (setAuthState)
  * para que el resto de la app (dashboard, etc.) lo vea.
+ *
+ * RENOVACIÓN DE TOKEN: el access token de Google vence a la hora. La función
+ * refreshAccessToken() usa signInSilently() para renovarlo en segundo plano
+ * sin pedirle al usuario que vuelva a loguearse (mientras la sesión de
+ * Google siga activa en el dispositivo).
  */
 
 import { useState, useCallback, useEffect } from 'react';
@@ -46,6 +51,33 @@ function ensureConfigured() {
     offlineAccess: false,
   });
   configured = true;
+}
+
+/**
+ * Intenta renovar el access token de Google en segundo plano, SIN mostrarle
+ * nada al usuario. Funciona mientras la cuenta de Google siga logueada en
+ * el dispositivo (que es el caso normal: el usuario no cerró sesión).
+ *
+ * @returns el nuevo access token si se pudo renovar, o null si no se pudo
+ *          (ej: el usuario cerró sesión de Google en el dispositivo, o no
+ *          hay conexión real a internet).
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+  if (Platform.OS === 'web') return null;
+
+  try {
+    ensureConfigured();
+    // Confirma (en silencio, sin diálogo) que la cuenta sigue logueada
+    await GoogleSignin.signInSilently();
+    // Pide un access token fresco — Google Play Services lo renueva solo
+    const tokens = await GoogleSignin.getTokens();
+    const accessToken = tokens.accessToken;
+    await saveAccessToken(accessToken);
+    return accessToken;
+  } catch (err) {
+    console.warn('[Auth] No se pudo renovar el token en segundo plano:', err);
+    return null;
+  }
 }
 
 export function useGoogleAuth(_initialState?: AuthState) {

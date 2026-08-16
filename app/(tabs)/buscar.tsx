@@ -25,6 +25,7 @@ import { useLocalSearchParams } from 'expo-router';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { useAuth } from '../../context/AuthContext';
 import { findByDNI, findByApellido, getAllRows, updateRow } from '../../services/sheets.service';
+import { withTokenRefresh, SessionExpiredError } from '../../utils/with-token-refresh';
 import { Colors } from '../../constants/Colors';
 import { formatDate, parseDate } from '../../utils/date-formatter';
 import type { TituloRecord, SheetSearchResult, SheetRowIndex } from '../../types';
@@ -114,10 +115,8 @@ export default function BuscarScreen() {
     setEditMode(false);
 
     try {
-      const result = await findByDNI(
-        authState.accessToken,
-        authState.spreadsheetId,
-        cleanDni
+      const result = await withTokenRefresh(authState, setAuthState, (token) =>
+        findByDNI(token, authState.spreadsheetId as string, cleanDni)
       );
 
       setSearchResult(result);
@@ -126,10 +125,14 @@ export default function BuscarScreen() {
         populateFields(result.data);
       }
     } catch (err) {
-      Alert.alert(
-        'Error de búsqueda',
-        'No se pudo conectar con Google Sheets. Verificá tu conexión.'
-      );
+      if (err instanceof SessionExpiredError) {
+        Alert.alert('Sesión vencida', 'Tu sesión de Google venció. Cerrá sesión y volvé a entrar.');
+      } else {
+        Alert.alert(
+          'Error de búsqueda',
+          'No se pudo conectar con Google Sheets. Verificá tu conexión.'
+        );
+      }
     } finally {
       setSearching(false);
     }
@@ -155,10 +158,8 @@ export default function BuscarScreen() {
     setEditMode(false);
 
     try {
-      const results = await findByApellido(
-        authState.accessToken,
-        authState.spreadsheetId,
-        query
+      const results = await withTokenRefresh(authState, setAuthState, (token) =>
+        findByApellido(token, authState.spreadsheetId as string, query)
       );
 
       if (results.length === 1) {
@@ -173,10 +174,14 @@ export default function BuscarScreen() {
         }
       }
     } catch (err) {
-      Alert.alert(
-        'Error de búsqueda',
-        'No se pudo conectar con Google Sheets. Verificá tu conexión.'
-      );
+      if (err instanceof SessionExpiredError) {
+        Alert.alert('Sesión vencida', 'Tu sesión de Google venció. Cerrá sesión y volvé a entrar.');
+      } else {
+        Alert.alert(
+          'Error de búsqueda',
+          'No se pudo conectar con Google Sheets. Verificá tu conexión.'
+        );
+      }
     } finally {
       setSearching(false);
     }
@@ -196,7 +201,9 @@ export default function BuscarScreen() {
     setEditMode(false);
 
     try {
-      const rows = await getAllRows(authState.accessToken, authState.spreadsheetId);
+      const rows = await withTokenRefresh(authState, setAuthState, (token) =>
+        getAllRows(token, authState.spreadsheetId as string)
+      );
       const withIndex: ListMatch[] = rows.map((data, i) => ({ rowIndex: i + 2, data }));
 
       const filtered = withIndex.filter(({ data }) => {
@@ -209,10 +216,14 @@ export default function BuscarScreen() {
       setListTitle(FILTRO_TITULOS[filtro]);
       setListResults(filtered);
     } catch (err) {
-      Alert.alert(
-        'Error al cargar',
-        'No se pudo obtener el listado desde Google Sheets.'
-      );
+      if (err instanceof SessionExpiredError) {
+        Alert.alert('Sesión vencida', 'Tu sesión de Google venció. Cerrá sesión y volvé a entrar.');
+      } else {
+        Alert.alert(
+          'Error al cargar',
+          'No se pudo obtener el listado desde Google Sheets.'
+        );
+      }
     } finally {
       setSearching(false);
     }
@@ -282,11 +293,8 @@ export default function BuscarScreen() {
         fechaDevolucionLaPlata: fechaDevolucion ? formatDate(fechaDevolucion) : '',
       };
 
-      await updateRow(
-        authState.accessToken,
-        authState.spreadsheetId,
-        searchResult.rowIndex,
-        updatedRecord
+      await withTokenRefresh(authState, setAuthState, (token) =>
+        updateRow(token, authState.spreadsheetId as string, searchResult.rowIndex as number, updatedRecord)
       );
 
       // Actualizar el resultado local
@@ -301,10 +309,14 @@ export default function BuscarScreen() {
         'Los datos fueron guardados exitosamente en Google Sheets.'
       );
     } catch (err) {
-      Alert.alert(
-        'Error al actualizar',
-        'No se pudieron guardar los cambios. Intentá nuevamente.'
-      );
+      if (err instanceof SessionExpiredError) {
+        Alert.alert('Sesión vencida', 'Tu sesión de Google venció. Cerrá sesión y volvé a entrar, y volvé a guardar los cambios.');
+      } else {
+        Alert.alert(
+          'Error al actualizar',
+          'No se pudieron guardar los cambios. Intentá nuevamente.'
+        );
+      }
     } finally {
       setSaving(false);
     }

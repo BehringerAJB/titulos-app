@@ -17,6 +17,7 @@ import {
   ScrollView,
   TextInput,
   Switch,
+  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -26,11 +27,9 @@ import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { useAuth } from '../../context/AuthContext';
 import { processImage, isOCRDataSufficient } from '../../services/ocr.service';
 import { findByDNI, addRow } from '../../services/sheets.service';
-import { showAlert } from '../../utils/cross-alert';
-import { logError, describeError } from '../../utils/logger';
+import { withTokenRefresh, SessionExpiredError } from '../../utils/with-token-refresh';
 import { Colors } from '../../constants/Colors';
 import { formatDate } from '../../utils/date-formatter';
-import { pickDateWeb } from '../../utils/cross-date';
 import { isValidDNI } from '../../utils/dni-cleaner';
 import { getAvailableSeries } from '../../utils/series-detector';
 import type { TituloRecord, OCRData } from '../../types';
@@ -49,7 +48,7 @@ const emptyRecord = (): Partial<TituloRecord> => ({
 });
 
 export default function NuevoTituloScreen() {
-  const { authState } = useAuth();
+  const { authState, setAuthState } = useAuth();
   const cameraRef = useRef<any>(null);
 
   // Permisos de cámara
@@ -75,24 +74,6 @@ export default function NuevoTituloScreen() {
   const [fechaDevolucion, setFechaDevolucion] = useState<Date | null>(null);
 
   // Date pickers
-  /**
-   * Abre el selector de fecha: modal nativo en el teléfono,
-   * calendario nativo del navegador en web (el modal RN no existe ahí).
-   */
-  const openDatePicker = async (
-    which: 'retiro' | 'envio' | 'devolucion',
-    label: string,
-    current: Date | null,
-    setter: (d: Date) => void
-  ) => {
-    if (Platform.OS === 'web') {
-      const picked = await pickDateWeb(label, current);
-      if (picked) setter(picked);
-      return;
-    }
-    setShowPicker(which);
-  };
-
   const [showPicker, setShowPicker] = useState<
     'retiro' | 'envio' | 'devolucion' | null
   >(null);
@@ -120,8 +101,7 @@ export default function NuevoTituloScreen() {
 
       setStep('ocr-confirm');
     } catch (err) {
-      logError('nuevo.processImage', describeError(err));
-      showAlert(
+      Alert.alert(
         'Error al procesar la imagen',
         'Intentá tomar la foto con mejor iluminación o ingresá los datos manualmente.'
       );
@@ -166,7 +146,7 @@ export default function NuevoTituloScreen() {
   const handleConfirmOCR = () => {
     const cleanedDni = dni.replace(/\D/g, '');
     if (!cleanedDni || !isValidDNI(cleanedDni)) {
-      showAlert(
+      Alert.alert(
         'DNI inválido',
         'El DNI es obligatorio y debe tener 7 u 8 dígitos. Corregilo antes de continuar.'
       );
@@ -182,21 +162,21 @@ export default function NuevoTituloScreen() {
     const cleanDni = dni.replace(/\D/g, '');
 
     if (!authState.accessToken || !authState.spreadsheetId) {
-      showAlert('Error', 'Sesión expirada. Por favor reiniciá la app.');
+      Alert.alert('Error', 'Sesión expirada. Por favor reiniciá la app.');
       return;
     }
 
     // Validar campos obligatorios del formulario admin
     if (retirado && !fechaRetiro) {
-      showAlert('Datos incompletos', 'Completá la Fecha de Retiro.');
+      Alert.alert('Datos incompletos', 'Completá la Fecha de Retiro.');
       return;
     }
     if (retirado && !quienRetiro.trim()) {
-      showAlert('Datos incompletos', 'Completá quién retiró el título.');
+      Alert.alert('Datos incompletos', 'Completá quién retiró el título.');
       return;
     }
     if (remitido && !fechaEnvio) {
-      showAlert('Datos incompletos', 'Completá la Fecha de Envío a La Plata.');
+      Alert.alert('Datos incompletos', 'Completá la Fecha de Envío a La Plata.');
       return;
     }
 
@@ -204,14 +184,12 @@ export default function NuevoTituloScreen() {
 
     try {
       // Verificar DNI único
-      const searchResult = await findByDNI(
-        authState.accessToken,
-        authState.spreadsheetId,
-        cleanDni
+      const searchResult = await withTokenRefresh(authState, setAuthState, (token) =>
+        findByDNI(token, authState.spreadsheetId as string, cleanDni)
       );
 
       if (searchResult.found) {
-        showAlert(
+        Alert.alert(
           'DNI ya registrado',
           `Este DNI (${cleanDni}) ya posee un título registrado.\n¿Deseás editarlo?`,
           [
@@ -244,19 +222,28 @@ export default function NuevoTituloScreen() {
         ultimaModificacion: '', // lo agrega el servicio
       };
 
-      await addRow(authState.accessToken, authState.spreadsheetId, record);
+      await withTokenRefresh(authState, setAuthState, (token) =>
+        addRow(token, authState.spreadsheetId as string, record)
+      );
 
-      showAlert(
+      Alert.alert(
         '✅ Título registrado',
         `El título de ${nombre || cleanDni} fue guardado exitosamente en Google Sheets.`,
         [{ text: 'OK', onPress: resetForm }]
       );
     } catch (err: any) {
-      logError('nuevo.addRow', describeError(err));
-      showAlert(
-        'Error al guardar',
-        'No se pudo guardar el título. Podés ver el detalle en "Ver registro" del Inicio.'
-      );
+      console.error('[Nuevo] Error al guardar:', err);
+      if (err instanceof SessionExpiredError) {
+        Alert.alert(
+          'Sesión vencida',
+          'Tu sesión de Google venció. Cerrá sesión, volvé a entrar, y guardá el título de nuevo (revisá los datos, no se perdieron).'
+        );
+      } else {
+        Alert.alert(
+          'Error al guardar',
+          'No se pudo guardar el título. Verificá tu conexión a internet e intentá nuevamente.'
+        );
+      }
       setStep('admin-form');
     }
   };
@@ -489,7 +476,7 @@ export default function NuevoTituloScreen() {
               <View style={styles.conditionalFields}>
                 <TouchableOpacity
                   style={styles.datePickerButton}
-                  onPress={() => openDatePicker('retiro', 'Fecha de Retiro', fechaRetiro, setFechaRetiro)}
+                  onPress={() => setShowPicker('retiro')}
                 >
                   <Text style={styles.datePickerLabel}>Fecha de Retiro *</Text>
                   <Text style={styles.datePickerValue}>
@@ -526,7 +513,7 @@ export default function NuevoTituloScreen() {
               <View style={styles.conditionalFields}>
                 <TouchableOpacity
                   style={styles.datePickerButton}
-                  onPress={() => openDatePicker('envio', 'Fecha de Envío a La Plata', fechaEnvio, setFechaEnvio)}
+                  onPress={() => setShowPicker('envio')}
                 >
                   <Text style={styles.datePickerLabel}>Fecha de Envío a La Plata *</Text>
                   <Text style={styles.datePickerValue}>
@@ -542,7 +529,7 @@ export default function NuevoTituloScreen() {
               <Text style={styles.optionalSub}>Opcional — completar cuando el título regrese</Text>
               <TouchableOpacity
                 style={styles.datePickerButton}
-                onPress={() => openDatePicker('devolucion', 'Fecha de Devolución de La Plata', fechaDevolucion, setFechaDevolucion)}
+                onPress={() => setShowPicker('devolucion')}
               >
                 <Text style={styles.datePickerValue}>
                   {fechaDevolucion ? formatDate(fechaDevolucion) : 'Sin fecha (pendiente)'}

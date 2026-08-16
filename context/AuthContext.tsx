@@ -7,6 +7,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { getAuthState } from '../services/auth.service';
+import { refreshAccessToken } from '../hooks/useGoogleAuth';
 import type { AuthState } from '../types';
 
 interface AuthContextType {
@@ -34,7 +35,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Al iniciar la app, recuperar estado de autenticación guardado
-    getAuthState().then((state) => {
+    getAuthState().then(async (state) => {
+      // Si es una sesión real de Google (no Modo Demo), el access token
+      // guardado puede tener horas y ya haber vencido. Lo renovamos en
+      // segundo plano ACÁ, así el usuario no ve ningún error al abrir la
+      // app — solo si la renovación falla (ej: cerró sesión de Google en
+      // el dispositivo) se sigue usando el token viejo, que fallará más
+      // adelante con un mensaje claro de "sesión vencida".
+      if (state.isAuthenticated && !state.isDemoMode && state.accessToken !== 'demo') {
+        const freshToken = await refreshAccessToken();
+        if (freshToken) {
+          state = { ...state, accessToken: freshToken };
+        }
+      }
       setAuthState(state);
       setLoading(false);
     });
