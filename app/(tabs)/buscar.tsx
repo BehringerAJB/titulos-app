@@ -42,7 +42,7 @@ const FILTRO_TITULOS: Record<FiltroDashboard, string> = {
 };
 
 export default function BuscarScreen() {
-  const { authState } = useAuth();
+  const { authState, setAuthState } = useAuth();
   const params = useLocalSearchParams<{ dni?: string; filtro?: FiltroDashboard }>();
 
   // Solapa activa: buscar por DNI o por Apellido
