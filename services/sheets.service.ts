@@ -24,9 +24,12 @@ import axios from 'axios';
 import { formatDateTime } from '../utils/date-formatter';
 import type { TituloRecord, SheetSearchResult, SheetRowIndex } from '../types';
 
-// Nombre del archivo de Google Sheets que se creará/buscará
-// (sin tilde a propósito: coincide con el nombre del archivo ya renombrado en Drive)
-const SPREADSHEET_NAME = 'Titulos Secundario';
+// ID FIJO de la planilla oficial del profesor Behringer en Google Sheets.
+// TODOS los usuarios (profesor, Belén, etc.) se conectan siempre a ESTA
+// misma planilla — la app YA NO busca por nombre ni crea planillas nuevas.
+// Esto evita que cada usuario termine con su propia copia vacía.
+// Extraído de: https://docs.google.com/spreadsheets/d/13efOar4lQD-w1F8T4dB3Z9Hi8pSmirsd5JIw1xuakOY/edit
+const SPREADSHEET_ID_FIJO = '13efOar4lQD-w1F8T4dB3Z9Hi8pSmirsd5JIw1xuakOY';
 
 // Nombre de la hoja dentro del archivo
 const SHEET_NAME = 'Títulos';
@@ -146,12 +149,23 @@ function sheetsHeaders(accessToken: string) {
   return { Authorization: `Bearer ${accessToken}` };
 }
 
+/** Se lanza cuando el usuario logueado NO tiene acceso a la planilla oficial */
+export class SinAccesoPlanillaError extends Error {
+  constructor() {
+    super('SIN_ACCESO_PLANILLA');
+    this.name = 'SinAccesoPlanillaError';
+  }
+}
+
 /**
- * Busca en Google Drive un spreadsheet con el nombre SPREADSHEET_NAME.
- * Si no existe, lo crea con encabezados.
- * 
+ * Verifica que el usuario logueado tenga acceso a la planilla OFICIAL y fija
+ * del profesor Behringer (SPREADSHEET_ID_FIJO). Ya no busca por nombre ni
+ * crea planillas nuevas — todos los usuarios comparten siempre la misma.
+ *
  * @param accessToken - Token de acceso OAuth
- * @returns ID del spreadsheet
+ * @returns el ID fijo del spreadsheet, si el usuario tiene acceso
+ * @throws SinAccesoPlanillaError si la cuenta logueada no tiene acceso
+ *         (el profesor todavía no le compartió el archivo desde Drive)
  */
 export async function findOrCreateSpreadsheet(accessToken: string): Promise<string> {
   if (accessToken === 'demo') {
@@ -159,52 +173,19 @@ export async function findOrCreateSpreadsheet(accessToken: string): Promise<stri
   }
   const headers = sheetsHeaders(accessToken);
 
-  // Buscar archivo existente
-  const searchRes = await axios.get(`${DRIVE_BASE}/files`, {
-    headers,
-    params: {
-      q: `name='${SPREADSHEET_NAME}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
-      fields: 'files(id,name)',
-    },
-  });
-
-  const files = searchRes.data.files || [];
-  if (files.length > 0) {
-    return files[0].id as string;
+  try {
+    // Pedido liviano: solo confirma que el usuario puede leer esta planilla
+    await axios.get(`${SHEETS_BASE}/${SPREADSHEET_ID_FIJO}`, {
+      headers,
+      params: { fields: 'spreadsheetId' },
+    });
+    return SPREADSHEET_ID_FIJO;
+  } catch (err: any) {
+    if (err?.response?.status === 403 || err?.response?.status === 404) {
+      throw new SinAccesoPlanillaError();
+    }
+    throw err;
   }
-
-  // Crear nuevo spreadsheet con encabezados
-  const createRes = await axios.post(
-    SHEETS_BASE,
-    {
-      properties: { title: SPREADSHEET_NAME },
-      sheets: [
-        {
-          properties: { title: SHEET_NAME },
-          data: [
-            {
-              startRow: 0,
-              startColumn: 0,
-              rowData: [
-                {
-                  values: HEADER_ROW.map((h) => ({
-                    userEnteredValue: { stringValue: h },
-                    userEnteredFormat: {
-                      textFormat: { bold: true },
-                      backgroundColor: { red: 0.102, green: 0.180, blue: 0.353 }, // #1A2E5A
-                    },
-                  })),
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-    { headers }
-  );
-
-  return createRes.data.spreadsheetId as string;
 }
 
 /**

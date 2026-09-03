@@ -35,7 +35,7 @@ import {
   logout as authLogout,
   AUTH_CONFIG,
 } from '../services/auth.service';
-import { findOrCreateSpreadsheet } from '../services/sheets.service';
+import { findOrCreateSpreadsheet, SinAccesoPlanillaError } from '../services/sheets.service';
 import type { AuthState } from '../types';
 
 // Scopes de Google APIs (los que empiezan con http; 'email'/'profile' ya
@@ -123,7 +123,8 @@ export function useGoogleAuth(_initialState?: AuthState) {
       const tokens = await GoogleSignin.getTokens();
       const accessToken = tokens.accessToken;
 
-      // Busca o crea la planilla "Títulos Secundario" en el Drive del usuario
+      // Verifica acceso a la planilla OFICIAL y fija del profesor (ID fijo,
+      // ya no se busca por nombre ni se crean planillas nuevas por usuario)
       const spreadsheetId = await findOrCreateSpreadsheet(accessToken);
 
       await Promise.all([
@@ -139,6 +140,14 @@ export function useGoogleAuth(_initialState?: AuthState) {
         spreadsheetId,
       };
     } catch (err: any) {
+      if (err instanceof SinAccesoPlanillaError) {
+        setError(
+          'Tu cuenta de Google todavía no tiene acceso a la planilla del profesor. ' +
+            'Pedile al profesor Behringer que te comparta el archivo desde Google Drive ' +
+            'con permiso de Editor, y volvé a intentar iniciar sesión.'
+        );
+        return null;
+      }
       if (isErrorWithCode(err)) {
         switch (err.code) {
           case statusCodes.SIGN_IN_CANCELLED:
