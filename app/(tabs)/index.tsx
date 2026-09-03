@@ -115,6 +115,15 @@ export default function DashboardScreen() {
         />
       }
     >
+      {/* Cartel bien visible de Modo Demo — para que nunca se confunda con datos reales */}
+      {authState.isDemoMode && (
+        <View style={styles.demoBanner}>
+          <Text style={styles.demoBannerText}>
+            🧪 MODO DEMO — Datos de ejemplo ficticios. No es tu planilla real.
+          </Text>
+        </View>
+      )}
+
       {/* Bienvenida */}
       <View style={styles.welcomeCard}>
         <View style={{ flex: 1 }}>
@@ -256,6 +265,20 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 40,
     gap: 16,
+  },
+  demoBanner: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  demoBannerText: {
+    color: '#92400E',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   welcomeCard: {
     backgroundColor: Colors.primary,

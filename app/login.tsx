@@ -17,6 +17,7 @@ import {
 import { router } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { useGoogleAuth } from '../hooks/useGoogleAuth';
+import { resetDemoDatabase } from '../services/sheets.service';
 import { showAlert } from '../utils/cross-alert';
 import { Colors } from '../constants/Colors';
 
@@ -34,8 +35,11 @@ export default function LoginScreen() {
     }
   };
 
-  // Login simulado para Modo Demo/Prueba
+  // Login simulado para Modo Demo/Prueba.
+  // Reinicia siempre los 3 registros de ejemplo (100% ficticios, en memoria,
+  // nunca tocan Google Sheets) para que cada práctica arranque de cero.
   const handleDemoLogin = () => {
+    resetDemoDatabase();
     setAuthState({
       isAuthenticated: true,
       accessToken: 'demo',

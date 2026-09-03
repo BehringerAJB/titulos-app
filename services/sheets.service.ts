@@ -51,11 +51,16 @@ const HEADER_ROW = [
   'Última Modificación',
 ];
 
-// Base de datos local simulada para el Modo Demo / Prueba
-const localMockDatabase: TituloRecord[] = [
+// Base de datos local simulada para el Modo Demo / Prueba.
+// IMPORTANTE: estos 3 registros son 100% ficticios, para que el operador
+// practique sin tocar la planilla real. Viven solo en memoria (nunca se
+// guardan en ningún lado) y se reinician cada vez que se cierra la app.
+// A propósito llevan nombres y DNIs claramente inventados/no-reales, para
+// que nunca se puedan confundir con una persona real ni con datos reales.
+const DEMO_DATA_INICIAL: TituloRecord[] = [
   {
-    dni: "30123456",
-    apellidoNombre: "GONZALEZ, MARÍA BELÉN",
+    dni: "00000001",
+    apellidoNombre: "EJEMPLO DEMO, ALUMNO UNO",
     fechaEmision: "15/05/2021",
     calificacionFinal: "8.50",
     serieModelo: "MODELO 2020",
@@ -69,14 +74,14 @@ const localMockDatabase: TituloRecord[] = [
     ultimaModificacion: "19/06/2026 10:30"
   },
   {
-    dni: "35987654",
-    apellidoNombre: "RODRIGUEZ, JUAN CARLOS",
+    dni: "00000002",
+    apellidoNombre: "EJEMPLO DEMO, ALUMNO DOS",
     fechaEmision: "10/11/2020",
     calificacionFinal: "9.00",
     serieModelo: "MODELO 2020",
     retirado: true,
     fechaRetiro: "12/12/2020",
-    quienRetiro: "RODRIGUEZ, JUAN CARLOS",
+    quienRetiro: "EJEMPLO DEMO, ALUMNO DOS",
     remitidoLaPlata: false,
     fechaEnvioLaPlata: "",
     fechaDevolucionLaPlata: "",
@@ -84,8 +89,8 @@ const localMockDatabase: TituloRecord[] = [
     ultimaModificacion: "19/06/2026 11:15"
   },
   {
-    dni: "28456123",
-    apellidoNombre: "PÉREZ, SILVIA SUSANA",
+    dni: "00000003",
+    apellidoNombre: "EJEMPLO DEMO, ALUMNO TRES",
     fechaEmision: "04/08/2019",
     calificacionFinal: "7.75",
     serieModelo: "MODELO 2019",
@@ -99,6 +104,15 @@ const localMockDatabase: TituloRecord[] = [
     ultimaModificacion: "19/06/2026 12:00"
   }
 ];
+
+// Copia mutable que se usa/edita durante el Modo Demo. Se puede reiniciar
+// con resetDemoDatabase() para volver a los 3 registros de ejemplo.
+let localMockDatabase: TituloRecord[] = DEMO_DATA_INICIAL.map((r) => ({ ...r }));
+
+/** Reinicia la base de datos del Modo Demo a sus 3 registros de ejemplo originales. */
+export function resetDemoDatabase(): void {
+  localMockDatabase = DEMO_DATA_INICIAL.map((r) => ({ ...r }));
+}
 
 // ─── HELPERS DE CONVERSIÓN ────────────────────────────────────────────────────
 

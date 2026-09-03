@@ -334,6 +334,15 @@ export default function BuscarScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
+        {/* Cartel bien visible de Modo Demo — para que nunca se confunda con datos reales */}
+        {authState.isDemoMode && (
+          <View style={styles.demoBanner}>
+            <Text style={styles.demoBannerText}>
+              🧪 MODO DEMO — Datos de ejemplo ficticios. No es tu planilla real.
+            </Text>
+          </View>
+        )}
+
         {/* Buscador con solapas DNI / Apellido */}
         <View style={styles.searchCard}>
           <View style={styles.tabRow}>
@@ -702,6 +711,21 @@ function EditField({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { padding: 20, paddingBottom: 50, gap: 16 },
+
+  demoBanner: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  demoBannerText: {
+    color: '#92400E',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
 
   searchCard: {
     backgroundColor: Colors.surface,
